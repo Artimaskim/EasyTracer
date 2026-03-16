@@ -3,20 +3,7 @@
 window.vtrace = {
     trace: function(source, options = {}) {
         return new Promise(async (resolve, reject) => {
-            if (window.ImageTracer && typeof window.ImageTracer.imageToSVG === 'function') {
-                try {
-                    window.ImageTracer.imageToSVG(source, (svgString) => {
-                        if (!svgString || typeof svgString !== 'string' || svgString.trim().length === 0) {
-                            reject(new Error('ImageTracer returned empty SVG.'));
-                            return;
-                        }
-                        resolve(svgString);
-                    }, options);
-                    return;
-                } catch (err) {
-                    console.error('ImageTracer error inside vtrace:', err);
-                }
-            }
+            // Main tracing logic
             try {
                 const image = await loadImage(source);
                 const svg = rasterToVectorSVG(image, options);
@@ -33,7 +20,7 @@ function loadImage(src) {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => resolve(img);
-        img.onerror = (e) => reject(new Error('Невозможно загрузить изображение для трассировки.'));
+        img.onerror = (e) => reject(new Error('Could not load image for tracing.'));
         img.src = src;
     });
 }
@@ -45,225 +32,262 @@ function rasterToVectorSVG(image, options) {
     const width = Math.max(1, Math.round(iw * scaleFactor));
     const height = Math.max(1, Math.round(ih * scaleFactor));
 
-    console.log('rasterToVectorSVG: image dimensions', { iw, ih, width, height });
-
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas context не доступен.');
+    if (!ctx) throw new Error('Canvas context is not available.');
 
     const blurRadius = Number(options.blurradius) || 0;
     ctx.filter = blurRadius > 0 ? `blur(${Math.min(15, Math.max(0, blurRadius))}px)` : 'none';
     ctx.drawImage(image, 0, 0, width, height);
 
     const imageData = ctx.getImageData(0, 0, width, height);
-    const data = imageData.data;
+    
+    let detectedShapePieces = [];
+    // --- HYBRID TRACING: AUTO-SHAPES --- 
+    if (options.autoshapes) {
+        const detectedShapes = detectSimpleOvals(imageData, width, height, options);
+        if (detectedShapes && detectedShapes.length > 0) {
+            detectedShapePieces = detectedShapes.map(s => ` <ellipse cx="${s.cx.toFixed(2)}" cy="${s.cy.toFixed(2)}" rx="${s.rx.toFixed(2)}" ry="${s.ry.toFixed(2)}" fill="${s.fill}"/>`);
+            
+            // "Erase" the detected shapes from imageData to prevent re-tracing
+            const data = imageData.data;
+            detectedShapes.forEach(shape => {
+                const { cx, cy, rx, ry } = shape;
+                const minX = Math.floor(cx - rx);
+                const maxX = Math.ceil(cx + rx);
+                const minY = Math.floor(cy - ry);
+                const maxY = Math.ceil(cy + ry);
 
-    console.log('rasterToVectorSVG: raw image data sample (top-left pixel)', data.slice(0, 4));
-
-    if (options.autoShapes) {
-        const ells = detectSimpleOvals(imageData, width, height, options);
-        if (ells && ells.length > 0) {
-            const pieces = ells.map((e) => ` <ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" fill="${e.fill}" stroke="${e.stroke}" stroke-width="${e.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`);
-            return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">${pieces.join('')}\n</svg>`;
-        }
-    }
-
-    const colorLevels = Math.max(2, Math.min(64, Number(options.numberofcolors) || 16));
-    const qtres = Number(options.qtres) || 1;
-    const ltres = Number(options.ltres) || 1;
-    const cellSize = Math.max(1, Math.round(Math.min(16, (qtres + ltres) / 2)));
-    const pathOmit = Math.max(1, Number(options.pathomit) || 3);
-    const rightangleenhance = Boolean(options.rightangleenhance);
-    const linefilter = Boolean(options.linefilter);
-
-    const rects = [];
-    for (let y = 0; y < height; y += cellSize) {
-        for (let x = 0; x < width; x += cellSize) {
-            let rAcc = 0, gAcc = 0, bAcc = 0, aAcc = 0, count = 0;
-            for (let yy = y; yy < Math.min(height, y + cellSize); yy++) {
-                for (let xx = x; xx < Math.min(width, x + cellSize); xx++) {
-                    const idx = (yy * width + xx) * 4;
-                    rAcc += data[idx];
-                    gAcc += data[idx + 1];
-                    bAcc += data[idx + 2];
-                    aAcc += data[idx + 3];
-                    count += 1;
-                }
-            }
-            if (count === 0) continue;
-            const r = Math.round(rAcc / count);
-            const g = Math.round(gAcc / count);
-            const b = Math.round(bAcc / count);
-            const a = Math.round(aAcc / count);
-
-            const fill = a < 20 ? 'transparent' : `rgb(${Math.round(rAcc/count)},${Math.round(gAcc/count)},${Math.round(bAcc/count)})`;
-
-            if (a < 20 && fill === 'transparent') {
-                // Only add if it's explicitly transparent and not just skipped
-                rects.push({ x, y, w: cellSize, h: cellSize, fill, gray: 255, area: cellSize * cellSize });
-                continue;
-            }
-
-            const gray = (0.299 * r + 0.587 * g + 0.114 * b);
-            if (gray > 250 && a > 20) continue; // Skip only very bright non-transparent pixels.
-
-            const quant = (value) => {
-                const step = 255 / (colorLevels - 1);
-                return Math.round(Math.round(value / step) * step);
-            };
-
-            const qr = quant(r);
-            const qg = quant(g);
-            const qb = quant(b);
-            const quantizedFill = `rgb(${qr},${qg},${qb})`;
-            rects.push({ x, y, w: cellSize, h: cellSize, fill: quantizedFill, gray, area: cellSize * cellSize });
-        }
-    }
-
-    console.log('rasterToVectorSVG: initial rects count', rects.length);
-
-    if (rects.length === 0) {
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="#eee"/></svg>`;
-    }
-
-    const simplified = [];
-    if (rightangleenhance) {
-        const rowMap = new Map();
-        rects.forEach(r => {
-            const k = `${r.y}:${r.fill}`;
-            let row = rowMap.get(k);
-            if (!row) {
-                row = [];
-                rowMap.set(k, row);
-            }
-            row.push(r);
-        });
-        rowMap.forEach(row => {
-            row.sort((a, b) => a.x - b.x);
-            let current = null;
-            row.forEach(r => {
-                if (!current) {
-                    current = { ...r };
-                    return;
-                }
-                if (r.x <= current.x + current.w + 1 && r.fill === current.fill && r.y === current.y) {
-                    current.w = Math.max(current.w, (r.x + r.w) - current.x);
-                } else {
-                    simplified.push(current);
-                    current = { ...r };
+                for (let y = minY; y <= maxY; y++) {
+                    for (let x = minX; x <= maxX; x++) {
+                        if (x < 0 || y < 0 || x >= width || y >= height) continue;
+                        
+                        if ( ( (x-cx)*(x-cx) / (rx*rx) ) + ( (y-cy)*(y-cy) / (ry*ry) ) <= 1.1 ) {
+                            const idx = (y * width + x) * 4;
+                            data[idx] = 255; data[idx + 1] = 255; data[idx + 2] = 255; data[idx + 3] = 0;
+                        }
+                    }
                 }
             });
-            if (current) simplified.push(current);
-        });
-    } else {
-        simplified.push(...rects);
+        }
     }
 
-    console.log('rasterToVectorSVG: simplified rects count', simplified.length);
+    // --- MAIN TRACING: PATH-BASED --- 
+    const pathPieces = tracePaths(imageData, width, height, options);
+    const allPieces = [...detectedShapePieces, ...pathPieces];
 
-    const svgPieces = [];
-    let keep = 0;
-    for (const r of simplified) {
-        if (linefilter && (r.w < 2 || r.h < 2)) continue;
-        if (pathOmit > 1 && r.area < cellSize * pathOmit) continue;
-        svgPieces.push(`<rect x=\"${r.x}\" y=\"${r.y}\" width=\"${r.w}\" height=\"${r.h}\" fill=\"${r.fill}\" stroke=\"none\"/>`);
-        keep += 1;
-        if (keep > 30000) break;
-    }
-
-    console.log('rasterToVectorSVG: svgPieces count', svgPieces.length);
-
-    // Ensure at least one shape exists to prevent empty vector output.
-    if (svgPieces.length === 0) {
-        svgPieces.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`);
+    if (allPieces.length === 0) {
+        allPieces.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`);
     }
 
     const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">` +
-        `${svgPieces.join('')}\n</svg>`;
-    console.log('rasterToVectorSVG: final svg string length', svg.length);
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">\n` +
+        `  <rect width="100%" height="100%" fill="transparent"/>\n` +
+        `  ${allPieces.join('\n')}\n</svg>`;
+    
     return svg;
 }
+
+function tracePaths(imageData, width, height, options) {
+    const data = imageData.data;
+    const colorLevels = Math.max(2, Math.min(64, Number(options.numberofcolors) || 16));
+    const qtres = Number(options.qtres) || 1;
+    const ltres = Number(options.ltres) || 1;
+    const pathOmit = Math.max(1, Number(options.pathomit) || 3);
+    const linefilter = Boolean(options.linefilter);
+
+    const indexedData = ImageTracer.getImgdata(width, height, data);
+    const pal = ImageTracer.getPalette(colorLevels, indexedData);
+    const colorQuantizedData = ImageTracer.colorquantization(indexedData, pal, options);
+    const layerData = ImageTracer.layering(colorQuantizedData);
+    const pathData = ImageTracer.batchpathscan(layerData, pathOmit);
+    const interpPathData = ImageTracer.batchinterpollation(pathData, ltres, qtres);
+
+    let svgPathStrs = [];
+    interpPathData.forEach((layer, layerIdx) => {
+        layer.forEach((path, pathIdx) => {
+            if(linefilter && path.points.length < 4) return;
+            const color = pal[path.colorid];
+            if (!color || color.a < 32) return;
+            const fill = `rgb(${color.r},${color.g},${color.b})`;
+
+            let pathStr = `M ${path.points[0][1].toFixed(3)} ${path.points[0][2].toFixed(3)} `;
+            path.points.slice(1).forEach(p => {
+                pathStr += `${ImageTracer.pathnode_to_svg[p[0]]} `;
+                p.slice(1).forEach(val => { pathStr += `${val.toFixed(3)} `; });
+            });
+            pathStr += "Z";
+            svgPathStrs.push(`<path d="${pathStr}" fill="${fill}" stroke="none"/>`);
+        });
+    });
+    return svgPathStrs;
+}
+
 function detectSimpleOvals(imageData, width, height, options) {
     const data = imageData.data;
-    const threshold = 200;
     const visited = new Uint8Array(width * height);
     const blobs = [];
-
-    const idx = (x, y) => y * width + x;
-
-    for (let y = 0; y < height; y += 2) {
-        for (let x = 0; x < width; x += 2) {
-            const i = idx(x, y);
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const i = (y * width + x);
             if (visited[i]) continue;
-            const alpha = data[(y * width + x) * 4 + 3];
-            if (alpha < 30) continue;
-            const r = data[(y * width + x) * 4];
-            const g = data[(y * width + x) * 4 + 1];
-            const b = data[(y * width + x) * 4 + 2];
-            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (gray > threshold) continue;
+            if (data[i * 4 + 3] < 128) continue;
 
-            const queue = [[x, y]];
-            const points = [];
-            visited[i] = 1;
-
-            while (queue.length) {
-                const [cx, cy] = queue.pop();
-                points.push([cx, cy]);
-                for (let oy = -1; oy <= 1; oy++) {
-                    for (let ox = -1; ox <= 1; ox++) {
-                        const nx = cx + ox;
-                        const ny = cy + oy;
-                        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-                        const ni = idx(nx, ny);
-                        if (visited[ni]) continue;
-                        const na = data[(ny * width + nx) * 4 + 3];
-                        if (na < 30) continue;
-                        const nr = data[(ny * width + nx) * 4];
-                        const ng = data[(ny * width + nx) * 4 + 1];
-                        const nb = data[(ny * width + nx) * 4 + 2];
-                        const ngray = 0.299 * nr + 0.587 * ng + 0.114 * nb;
-                        if (ngray > threshold) continue;
-                        visited[ni] = 1;
-                        queue.push([nx, ny]);
-                    }
-                }
-            }
-
-            if (points.length < 30) continue;
-            let minX = width, minY = height, maxX = 0, maxY = 0;
-            points.forEach(p => {
-                minX = Math.min(minX, p[0]);
-                minY = Math.min(minY, p[1]);
-                maxX = Math.max(maxX, p[0]);
-                maxY = Math.max(maxY, p[1]);
-            });
-            const w = maxX - minX + 1;
-            const h = maxY - minY + 1;
+            const blob = findConnectedComponent(imageData, width, height, x, y, visited);
+            if (blob.points.length < 20 || blob.points.length > 50000) continue;
+            const {minX, minY, maxX, maxY} = blob.bounds;
+            const w = maxX - minX + 1, h = maxY - minY + 1;
             if (w < 10 || h < 10) continue;
             const ratio = w / h;
-            if (ratio < 0.6 || ratio > 1.7) continue;
-            const area = points.length;
-            const expected = Math.PI * (w / 2) * (h / 2);
-            if (area < expected * 0.25) continue;
+            if (ratio < 0.5 || ratio > 2.0) continue;
+            const area = blob.points.length, bboxArea = w * h, density = area / bboxArea;
+            if (density < 0.5) continue;
+            const expectedEllipseArea = Math.PI * (w / 2) * (h / 2);
+            const areaRatio = area / expectedEllipseArea;
+            if (areaRatio < 0.7 || areaRatio > 1.3) continue;
 
-            blobs.push({
-                cx: minX + w / 2,
-                cy: minY + h / 2,
-                rx: w / 2,
-                ry: h / 2,
-                fill: 'none',
-                stroke: '#000',
-                strokeWidth: 2
-            });
-
-            if (blobs.length >= 5) break;
+            blobs.push({ cx: minX + w/2, cy: minY + h/2, rx: w/2, ry: h/2, fill: `rgb(${blob.avgColor.r},${blob.avgColor.g},${blob.avgColor.b})` });
+            if (blobs.length >= 20) break;
         }
-        if (blobs.length >= 5) break;
+        if (blobs.length >= 20) break;
     }
-
     return blobs;
 }
+
+function findConnectedComponent(imageData, width, height, startX, startY, visited) {
+    const data = imageData.data;
+    const startIdx = (startY * width + startX) * 4;
+    const startColor = { r: data[startIdx], g: data[startIdx+1], b: data[startIdx+2] };
+    const queue = [[startX, startY]];
+    const points = [];
+    visited[startY * width + startX] = 1;
+    let sumR = 0, sumG = 0, sumB = 0;
+    let minX = width, minY = height, maxX = 0, maxY = 0;
+    const colorDist = (c1, c2) => Math.sqrt(Math.pow(c1.r - c2.r, 2) + Math.pow(c1.g - c2.g, 2) + Math.pow(c1.b - c2.b, 2));
+
+    while (queue.length > 0) {
+        const [x, y] = queue.shift();
+        points.push([x,y]);
+        const i = (y * width + x) * 4;
+        const r = data[i], g = data[i+1], b = data[i+2];
+        sumR += r; sumG += g; sumB += b;
+        minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        
+        for(let dy = -1; dy <= 1; dy++) {
+            for(let dx = -1; dx <= 1; dx++) {
+                if(dx === 0 && dy === 0) continue;
+                const nx = x + dx, ny = y + dy;
+                if(nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                const ni = ny * width + nx;
+                if(visited[ni]) continue;
+                if(data[ni * 4 + 3] < 128) continue;
+                const neighborColor = { r: data[ni*4], g: data[ni*4+1], b: data[ni*4+2] };
+                if(colorDist(startColor, neighborColor) < 64) {
+                    visited[ni] = 1;
+                    queue.push([nx, ny]);
+                }
+            }
+        }
+    }
+    return { points, bounds: { minX, minY, maxX, maxY }, avgColor: { r: Math.round(sumR/points.length), g: Math.round(sumG/points.length), b: Math.round(sumB/points.length) } };
+}
+
+// --- Minimal ImageTracer Polyfill (for path finding) ---
+const ImageTracer = {
+    getImgdata: (w, h, data) => ({ width: w, height: h, data: data }),
+    getPalette: (numColors, imgd) => {
+        const data = imgd.data, pal = [];
+        for(let i=0; i<numColors; i++){
+            const gray = Math.floor(255 * (i / (numColors-1)));
+            pal.push({ r:gray, g:gray, b:gray, a:255 });
+        }
+        return pal;
+    },
+    colorquantization: (imgd, pal, options) => {
+        const data = imgd.data, id = new Array(imgd.width*imgd.height);
+        for(let j=0; j<data.length; j+=4){
+            if(data[j+3] < 128){ id[j/4] = -1; continue; }
+            let closest = -1, mindist = 1e12;
+            for(let i=0; i<pal.length; i++){
+                const dist = Math.pow(pal[i].r-data[j],2) + Math.pow(pal[i].g-data[j+1],2) + Math.pow(pal[i].b-data[j+2],2);
+                if(dist < mindist){ mindist = dist; closest = i; }
+            }
+            id[j/4] = closest;
+        }
+        return { ...imgd, data: id, palette: pal };
+    },
+    layering: (imgd) => {
+        const layers = Array.from({length: imgd.palette.length}, () => Array.from({length: imgd.height}, () => new Array(imgd.width).fill(0)));
+        for(let y=0; y<imgd.height; y++){
+            for(let x=0; x<imgd.width; x++){
+                const c = imgd.data[y*imgd.width+x];
+                if(c !== -1){ layers[c][y][x] = 1; }
+            }
+        }
+        return layers;
+    },
+    batchpathscan: (layers, pathomit) => layers.map((layer, i) => ImageTracer.pathscan(layer, pathomit).map(path => ({...path, colorid: i})) ),
+    pathscan: (arr, pathomit) => {
+        const paths = [], w = arr[0].length, h = arr.length;
+        for(let r=0; r<h; r++){
+            for(let c=0; c<w; c++){
+                if(arr[r][c] === 1){
+                    let path = { points:[], boundingbox:[c,r,c,r], holechildren:[] }, px=c,py=r,dir=1;
+                    while(true){
+                        arr[py][px] = 2;
+                        let np = ImageTracer.next_pixel(arr,px,py,dir);
+                        if(np.isend) break;
+                        path.points.push([dir, np.px, np.py]);
+                        px=np.px; py=np.py; dir=np.nd;
+                    }
+                    if(path.points.length >= pathomit) paths.push(path);
+                }
+            }
+        }
+        return paths;
+    },
+    next_pixel: (arr,px,py,dir) => {
+        const dirs = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+        for(let i=0; i<8; i++){
+            let cdir = (dir+i) % 8, nx = px+dirs[cdir][0], ny = py+dirs[cdir][1];
+            if(nx>=0 && nx<arr[0].length && ny>=0 && ny<arr.length && arr[ny][nx]===1) return { px:nx, py:ny, nd:(cdir+4)%8, isend:false };
+        }
+        return { isend:true };
+    },
+    batchinterpollation: (layers, ltres, qtres) => layers.map(layer => layer.map(path => ({ ...path, points: ImageTracer.fitseq(path.points, ltres, qtres) }))),
+    fitseq: (points, ltres, qtres) => {
+        if(points.length < 3) return points.map(p=>[1,p[1],p[2]]);
+        const segments = [], spl = points.length;
+        for(let i=0; i<spl; i++){
+            let p = (i>0) ? points[i-1] : points[spl-1];
+            let c = points[i], n = points[(i+1)%spl];
+            if( (c[1]===p[1] && c[1]===n[1]) || (c[2]===p[2] && c[2]===n[2]) ){
+                segments.push([1, c[1], c[2]]); // Line segment
+            } else {
+                segments.push(ImageTracer.fitCurve(points, i, qtres));
+            }
+        }
+        return segments;
+    },
+    fitCurve: (points, i, qtres) => {
+        const p = points, n = p.length, t = Math.min(Math.floor(n/2), 20);
+        const curve = [p[i]];
+        for(let j=1; j<=t; j++){
+            let f = j/t;
+            let bz = ImageTracer.getBezier(f, [p[(i-j+n)%n], p[i], p[(i+j)%n]]);
+            let d = Math.sqrt(Math.pow(bz.x-p[i][1], 2) + Math.pow(bz.y-p[i][2], 2));
+            if(d > qtres) break;
+            curve.push([3, bz.x, bz.y, bz.x, bz.y, bz.x, bz.y]);
+        }
+        return [3, curve[curve.length-1][1],curve[curve.length-1][2],curve[curve.length-1][3],curve[curve.length-1][4],curve[curve.length-1][5],curve[curve.length-1][6]];
+    },
+    getBezier: (t,pts) => {
+        let p0=pts[0], p1=pts[1], p2=pts[2], x, y;
+        x = (1-t)*(1-t)*p0[1] + 2*(1-t)*t*p1[1] + t*t*p2[1];
+        y = (1-t)*(1-t)*p0[2] + 2*(1-t)*t*p1[2] + t*t*p2[2];
+        return { x, y };
+    },
+    pathnode_to_svg: { 1:'L', 2:'Q', 3:'C' },
+};
