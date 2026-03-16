@@ -45,7 +45,8 @@ function rasterToVectorSVG(image, options) {
     const imageData = ctx.getImageData(0, 0, width, height);
     
     let detectedShapePieces = [];
-    if (options.autoshapes) {
+    const shapeSensitivity = Number(options.autoshapes) || 0;
+    if (shapeSensitivity > 0) {
         const detectedShapes = detectSimpleOvals(imageData, width, height, options);
         if (detectedShapes && detectedShapes.length > 0) {
             detectedShapePieces = detectedShapes.map(s => ` <ellipse cx="${s.cx.toFixed(2)}" cy="${s.cy.toFixed(2)}" rx="${s.rx.toFixed(2)}" ry="${s.ry.toFixed(2)}" fill="${s.fill}"/>`);
@@ -83,15 +84,17 @@ function tracePaths(imageData, width, height, options) {
     const linefilter = Boolean(options.linefilter);
     const allowLines = options.hasOwnProperty('allowLines') ? options.allowLines : true;
     const allowQuadratic = options.hasOwnProperty('allowQuadratic') ? options.allowQuadratic : true;
+    const smoothamount = Number(options.smoothamount) || 0;
 
     const indexedData = ImageTracer.getImgdata(width, height, imageData.data);
     const pal = ImageTracer.getPalette(options.numberofcolors || 16, indexedData);
     const colorQuantizedData = ImageTracer.colorquantization(indexedData, pal, options);
     const layerData = ImageTracer.layering(colorQuantizedData);
     
-    // Path Tracing and Post-processing
     let pathData = ImageTracer.batchpathscan(layerData, pathOmit);
-    pathData = ImageTracer.batchsurfacesmoothing(pathData);
+    if (smoothamount > 0) {
+        pathData = ImageTracer.batchsurfacesmoothing(pathData, { smoothamount });
+    }
 
     const interpPathData = ImageTracer.batchinterpollation(pathData, { ltres, qtres, allowLines, allowQuadratic });
 
@@ -122,21 +125,32 @@ function tracePaths(imageData, width, height, options) {
 }
 
 function detectSimpleOvals(imageData, width, height, options) {
+    const sensitivity = Number(options.autoshapes) || 0;
     const data = imageData.data;
     const visited = new Uint8Array(width * height);
     const blobs = [];
+
+    const requiredFillRatio = 0.9 - (sensitivity * 0.45); // from 0.9 (very strict) down to 0.45 (very loose)
+    const maxAspectRatio = 2.5 + (sensitivity * 2.5); // from 2.5 up to 5.0
+
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
             const i = (y * width + x);
             if (visited[i] || data[i * 4 + 3] < 128) continue;
+            
             const blob = findConnectedComponent(imageData, width, height, x, y, visited);
-            if (blob.points.length < 20 || blob.points.length > 50000) continue;
+            if (blob.points.length < 50) continue; // Ignore very small blobs
+
             const {minX, minY, maxX, maxY} = blob.bounds;
             const w = maxX - minX + 1, h = maxY - minY + 1;
-            if (w < 10 || h < 10) continue;
-            if (w / h < 0.5 || w / h > 2.0) continue;
-            if (blob.points.length / (w*h) < 0.5) continue;
-            if (blob.points.length / (Math.PI*(w/2)*(h/2)) < 0.7) continue;
+            if (w < 20 || h < 20) continue; // Ignore small shapes
+
+            const aspectRatio = w > h ? w/h : h/w;
+            if(aspectRatio > maxAspectRatio) continue;
+
+            const ellipticalFillRatio = blob.points.length / (Math.PI * (w/2) * (h/2));
+            if(ellipticalFillRatio < requiredFillRatio) continue;
+
             blobs.push({ cx:minX+w/2, cy:minY+h/2, rx:w/2, ry:h/2, fill:`rgb(${blob.avgColor.r},${blob.avgColor.g},${blob.avgColor.b})` });
             if (blobs.length >= 20) break;
         }
@@ -154,18 +168,24 @@ function findConnectedComponent(imageData, width, height, startX, startY, visite
     visited[startY * width + startX] = 1;
     let sumR=0, sumG=0, sumB=0, minX=width, minY=height, maxX=0, maxY=0;
     const colorDist = (c1, c2) => Math.sqrt(Math.pow(c1.r-c2.r,2) + Math.pow(c1.g-c2.g,2) + Math.pow(c1.b-c2.b,2));
-    while (queue.length > 0) {
-        const [x, y] = queue.shift();
+    
+    let head = 0;
+    while(queue.length > head){
+        const [x, y] = queue[head++];
         points.push([x,y]);
         const i = (y * width + x) * 4;
         sumR+=data[i]; sumG+=data[i+1]; sumB+=data[i+2];
         minX=Math.min(minX,x); minY=Math.min(minY,y); maxX=Math.max(maxX,x); maxY=Math.max(maxY,y);
+
         for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) {
             if((dx===0&&dy===0) || (x+dx<0||x+dx>=width||y+dy<0||y+dy>=height)) continue;
             const ni = (y+dy)*width+(x+dx);
             if(visited[ni] || data[ni*4+3]<128) continue;
             const nc = {r:data[ni*4],g:data[ni*4+1],b:data[ni*4+2]};
-            if(colorDist(startColor, nc)<64) { visited[ni]=1; queue.push([x+dx,y+dy]); }
+            if(colorDist(startColor, nc) < 64) { 
+                visited[ni]=1; 
+                queue.push([x+dx,y+dy]); 
+            }
         }
     }
     return { points, bounds:{minX,minY,maxX,maxY}, avgColor:{r:Math.round(sumR/points.length),g:Math.round(sumG/points.length),b:Math.round(sumB/points.length)} };
@@ -284,46 +304,28 @@ const ImageTracer = {
         return { isend: true };
     },
 
-    batchsurfacesmoothing: (paths) => {
+    batchsurfacesmoothing: (paths, opts) => {
+        const smoothing = (opts && !isNaN(opts.smoothamount)) ? opts.smoothamount : 0;
+        if (smoothing <= 0) return paths;
+
         return paths.map(layer => 
             layer.map(path => {
-                
-                // 1. Line straightening
                 const { points } = path;
-                if (points.length > 10) {
-                    const start = points[0];
-                    const end = points[points.length-1];
-                    let isLine = true;
-                    let totalDist = 0;
-                    for(let k=1; k < points.length-1; k++){
-                        const dist = ImageTracer.perpendicularDistance(points[k], start, end);
-                        totalDist += dist;
-                        if(dist > 0.4){ // Tolerance for line check
-                            isLine = false;
-                            break;
-                        }
-                    }
-                    if(isLine && (totalDist / points.length) < 0.2){
-                        path.points = [start, end];
-                        return path;
-                    }
-                }
+                if (points.length < 3) return path;
 
-                // 2. Jitter (noise) reduction
                 const smoothedPoints = [];
-                if (points.length > 0) {
-                    smoothedPoints.push(points[0]); // Keep first point
-                    const smoothing = 0.5;
-                    for (let i = 1; i < points.length - 1; i++) {
-                        const prev = smoothedPoints[i-1];
-                        const current = points[i];
-                        const next = points[i+1];
-                        const newX = current[0] * (1-smoothing) + (prev[0] + next[0]) * (smoothing / 2);
-                        const newY = current[1] * (1-smoothing) + (prev[1] + next[1]) * (smoothing / 2);
-                        smoothedPoints.push([newX, newY]);
-                    }
-                    smoothedPoints.push(points[points.length-1]); // Keep last point
+                smoothedPoints.push(points[0]); // Keep first point
+                
+                for (let i = 1; i < points.length - 1; i++) {
+                    const prev = smoothedPoints[i-1];
+                    const current = points[i];
+                    const next = points[i+1];
+                    const newX = current[0] * (1-smoothing) + (prev[0] + next[0]) * (smoothing / 2);
+                    const newY = current[1] * (1-smoothing) + (prev[1] + next[1]) * (smoothing / 2);
+                    smoothedPoints.push([newX, newY]);
                 }
+                
+                smoothedPoints.push(points[points.length-1]); // Keep last point
                 path.points = smoothedPoints;
                 return path;
             })
@@ -334,28 +336,24 @@ const ImageTracer = {
 
     fitseq: (points, opts) => {
         if (points.length < 2) return [];
-        
-        // If path is already a straight line, return it as such
         if (points.length === 2) {
             return [[1, points[0][0], points[0][1]], [1, points[1][0], points[1][1]]];
         }
 
         const segments = [];
         let i = 0;
-
-        while (i < points.length -1) {
+        while (i < points.length - 1) {
             const [segment, endIndex] = ImageTracer.fitCurve(points, i, opts);
             segments.push(segment);
             i = endIndex;
         }
-        
         segments.unshift([1, points[0][0], points[0][1]]);
         return segments;
     },
 
     fitCurve: (points, offset, opts) => {
         const slice = points.slice(offset);
-        if (slice.length < 2) return [[1, slice[0][0], slice[0][1]], points.length -1];
+        if (slice.length < 2) return [[1, slice[0][0], slice[0][1]], points.length - 1];
 
         if (opts.allowQuadratic) {
             for (let i = Math.min(slice.length - 1, 15); i >= 2; i--) {
@@ -372,7 +370,7 @@ const ImageTracer = {
                 if (maxError < opts.qtres) {
                     const t = ImageTracer.findTForPoint(curveSlice[maxErrorIndex], start, end);
                     const control = ImageTracer.calculateControlPoint(t, curveSlice[maxErrorIndex], start, end);
-                    return [[2, control[0], control[1], end[0], end[1]], offset + i -1];
+                    return [[2, control[0], control[1], end[0], end[1]], offset + i - 1];
                 }
             }
         }

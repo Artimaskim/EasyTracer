@@ -373,9 +373,13 @@
                     <label for="noise">Noise Suppression <span class="value-indicator" data-target="noise">8</span><span class="info-icon" data-tip="Ignore paths shorter than this value.">i</span></label>
                     <input type="range" id="noise" name="pathomit" min="0" max="100" value="8">
                 </div>
-                <div class="setting checkbox-setting">
-                    <label for="autoshapes">Auto circles/ovals <span class="info-icon" data-tip="Auto-detect simple ovals and circles.">i</span></label>
-                    <input type="checkbox" id="autoshapes" name="autoshapes" checked>
+                 <div class="setting">
+                    <label for="shape-sensitivity">Shape Detection <span class="value-indicator" data-target="shape-sensitivity">0.7</span><span class="info-icon" data-tip="Controls how aggressively the tracer looks for ovals. 0=off, 1=very aggressive.">i</span></label>
+                    <input type="range" id="shape-sensitivity" name="autoshapes" min="0" max="1" step="0.1" value="0.7">
+                </div>
+                <div class="setting">
+                    <label for="path-smoothing">Path Smoothing <span class="value-indicator" data-target="path-smoothing">0.5</span><span class="info-icon" data-tip="Smooths out jittery paths. 0=off, 1=max smoothing.">i</span></label>
+                    <input type="range" id="path-smoothing" name="smoothamount" min="0" max="1" step="0.1" value="0.5">
                 </div>
             </div>
             <div id="tooltip-popup"></div>

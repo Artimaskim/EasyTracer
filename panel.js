@@ -208,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateViewMode(){
         const svg = svgContainer.querySelector('svg');
         const hasValidSvg = svg && svg.children.length > 0;
-        console.log('updateViewMode', {isShowingVector, hasValidSvg});
+
         if (modeLabel) {
             modeLabel.textContent = (isShowingVector && hasValidSvg) ? 'Vector' : 'Raster';
         }
@@ -405,9 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         setTimeout(() => {
             const toleranceSettings = getToleranceSettings();
-            const options = { 
-                ...toleranceSettings 
-            };
+            const options = { ...toleranceSettings };
             
             settingsInputs.forEach(input => {
                 if(input.id === 'line-fit-tolerance') return;
@@ -418,42 +416,39 @@ document.addEventListener('DOMContentLoaded', () => {
                     options[input.name] = parseFloat(input.value);
                 }
             });
+            
+            const handleSuccess = (svgString) => {
+                if (!svgString || typeof svgString !== 'string' || svgString.trim().length === 0) {
+                    svgContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120"><rect width="300" height="120" fill="#111"/><text x="14" y="45" fill="#fff" font-size="14">Empty SVG. Check parameters.</text></svg>';
+                } else {
+                    renderSVGString(svgString);
+                }
+                const svg = svgContainer.querySelector('svg');
+                const hasValidSvg = !!svg && svg.children.length > 0;
+                isShowingVector = hasValidSvg;
+                
+                updateTransform();
+                updateViewMode();
+                hasTraced = true;
 
-            try {
-                Tracer.traceRasterToSVG(
-                    originalImage.src,
-                    (svgString) => {
-                        console.log('TRACE CALLBACK: svgString length=', svgString ? svgString.length : 0);
-                        if (!svgString || typeof svgString !== 'string' || svgString.trim().length === 0) {
-                            svgContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120"><rect width="300" height="120" fill="#111"/><text x="14" y="45" fill="#fff" font-size="14">Empty SVG. Check parameters.</text></svg>';
-                        } else {
-                            const ok = renderSVGString(svgString);
-                            if (!ok) {
-                                svgContainer.innerHTML = svgString.replace(/^\s*<\?xml[^>]*>\s*/i, '').trim();
-                            }
-                        }
-                        const svg = svgContainer.querySelector('svg');
-                        const hasValidSvg = !!svg && svg.children.length > 0;
-                        isShowingVector = hasValidSvg;
-                        
-                        updateTransform();
-                        updateViewMode();
-                        hasTraced = true;
+                traceBtn.disabled = false;
+                traceBtn.textContent = 'Retrace';
+                saveSvgBtn.disabled = false;
+                if (copyClipboardBtn) copyClipboardBtn.disabled = false;
+                clearAllBtn.disabled = false;
+            };
 
-                        traceBtn.disabled = false;
-                        traceBtn.textContent = 'Retrace';
-                        saveSvgBtn.disabled = false;
-                        if (copyClipboardBtn) copyClipboardBtn.disabled = false;
-                        clearAllBtn.disabled = false;
-                    },
-                    options
-                );
-            } catch (err) {
+            const handleError = (err) => {
                 console.error('Tracing error:', err);
                 alert('Error during tracing. Try adjusting settings.');
                 traceBtn.disabled = false;
                 traceBtn.textContent = hasTraced ? 'Retrace' : 'Trace';
-            }
+            };
+
+            vtrace.trace(originalImage.src, options)
+                .then(handleSuccess)
+                .catch(handleError);
+
         }, 50);
     });
 
