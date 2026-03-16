@@ -1,21 +1,18 @@
-# Node and system
+# Dependencies
+/node_modules
+
+# Build artifacts
+/dist
+/build
+
+# Log files
 *.log
+npm-debug.log*
+
+# System files
 .DS_Store
 Thumbs.db
 
-# User settings
-.vscode/
-
-# Build outputs
-dist/
-build/
-
-# Mac
-*.swp
-
-# Python
-__pycache__/
-*.py[cod]
-
-# extension packages
-*.crx
+# IDE specific
+.idea
+.vscode
