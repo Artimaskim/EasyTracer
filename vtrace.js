@@ -84,12 +84,15 @@ function tracePaths(imageData, width, height, options) {
     const allowLines = options.hasOwnProperty('allowLines') ? options.allowLines : true;
     const allowQuadratic = options.hasOwnProperty('allowQuadratic') ? options.allowQuadratic : true;
 
-
     const indexedData = ImageTracer.getImgdata(width, height, imageData.data);
     const pal = ImageTracer.getPalette(options.numberofcolors || 16, indexedData);
     const colorQuantizedData = ImageTracer.colorquantization(indexedData, pal, options);
     const layerData = ImageTracer.layering(colorQuantizedData);
-    const pathData = ImageTracer.batchpathscan(layerData, pathOmit);
+    
+    // Path Tracing and Post-processing
+    let pathData = ImageTracer.batchpathscan(layerData, pathOmit);
+    pathData = ImageTracer.batchsurfacesmoothing(pathData);
+
     const interpPathData = ImageTracer.batchinterpollation(pathData, { ltres, qtres, allowLines, allowQuadratic });
 
     let svgPathStrs = [];
@@ -160,7 +163,7 @@ function findConnectedComponent(imageData, width, height, startX, startY, visite
         for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) {
             if((dx===0&&dy===0) || (x+dx<0||x+dx>=width||y+dy<0||y+dy>=height)) continue;
             const ni = (y+dy)*width+(x+dx);
-if(visited[ni] || data[ni*4+3]<128) continue;
+            if(visited[ni] || data[ni*4+3]<128) continue;
             const nc = {r:data[ni*4],g:data[ni*4+1],b:data[ni*4+2]};
             if(colorDist(startColor, nc)<64) { visited[ni]=1; queue.push([x+dx,y+dy]); }
         }
@@ -261,7 +264,7 @@ const ImageTracer = {
         for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) if (a[r][c] === 1) {
             let path = { points: [], bbox: [c, r, c, r] }, px = c, py = r, d = 1;
             while (true) {
-                path.points.push([px, py]); // Simplified points
+                path.points.push([px, py]);
                 a[py][px] = 2;
                 let n = ImageTracer.next_pixel(a, px, py, d);
                 if (n.isend) break;
@@ -280,89 +283,106 @@ const ImageTracer = {
         }
         return { isend: true };
     },
+
+    batchsurfacesmoothing: (paths) => {
+        return paths.map(layer => 
+            layer.map(path => {
+                
+                // 1. Line straightening
+                const { points } = path;
+                if (points.length > 10) {
+                    const start = points[0];
+                    const end = points[points.length-1];
+                    let isLine = true;
+                    let totalDist = 0;
+                    for(let k=1; k < points.length-1; k++){
+                        const dist = ImageTracer.perpendicularDistance(points[k], start, end);
+                        totalDist += dist;
+                        if(dist > 0.4){ // Tolerance for line check
+                            isLine = false;
+                            break;
+                        }
+                    }
+                    if(isLine && (totalDist / points.length) < 0.2){
+                        path.points = [start, end];
+                        return path;
+                    }
+                }
+
+                // 2. Jitter (noise) reduction
+                const smoothedPoints = [];
+                if (points.length > 0) {
+                    smoothedPoints.push(points[0]); // Keep first point
+                    const smoothing = 0.5;
+                    for (let i = 1; i < points.length - 1; i++) {
+                        const prev = smoothedPoints[i-1];
+                        const current = points[i];
+                        const next = points[i+1];
+                        const newX = current[0] * (1-smoothing) + (prev[0] + next[0]) * (smoothing / 2);
+                        const newY = current[1] * (1-smoothing) + (prev[1] + next[1]) * (smoothing / 2);
+                        smoothedPoints.push([newX, newY]);
+                    }
+                    smoothedPoints.push(points[points.length-1]); // Keep last point
+                }
+                path.points = smoothedPoints;
+                return path;
+            })
+        );
+    },
     
     batchinterpollation: (p, opts) => p.map(l => l.map(path => ({ ...path, points: ImageTracer.fitseq(path.points, opts) }))),
 
     fitseq: (points, opts) => {
         if (points.length < 2) return [];
+        
+        // If path is already a straight line, return it as such
+        if (points.length === 2) {
+            return [[1, points[0][0], points[0][1]], [1, points[1][0], points[1][1]]];
+        }
 
         const segments = [];
         let i = 0;
 
-        while (i < points.length) {
-            const startPoint = points[i];
-            let bestSegment = null;
-            let bestFitEndIndex = i + 1;
-
-            if (opts.allowQuadratic) {
-                for (let j = i + 2; j < points.length; j++) {
-                    const midIndex = Math.floor((i + j) / 2);
-                    const controlPoint = points[midIndex];
-                    const endPoint = points[j];
-                    
-                    const [q, error] = ImageTracer.fitCurve(points.slice(i, j + 1), opts.qtres);
-                    if (error <= opts.qtres) {
-                        bestSegment = q;
-                        bestFitEndIndex = j;
-                    } else {
-                        break; 
-                    }
-                }
-            }
-
-            if (bestSegment) {
-                segments.push(bestSegment);
-                i = bestFitEndIndex;
-            } else {
-                 if (opts.allowLines) {
-                    const endIndex = (i + 1) % points.length;
-                    const endPoint = points[endIndex];
-                    segments.push([1, endPoint[0], endPoint[1]]);
-                 }
-                 i++;
-            }
+        while (i < points.length -1) {
+            const [segment, endIndex] = ImageTracer.fitCurve(points, i, opts);
+            segments.push(segment);
+            i = endIndex;
         }
         
-        // Add starting command
-        if (segments.length > 0) {
-            segments.unshift([1, points[0][0], points[0][1]]);
-        }
-        
+        segments.unshift([1, points[0][0], points[0][1]]);
         return segments;
     },
 
-    fitCurve: (points, tolerance) => {
-        if (points.length <= 1) return [[1, points[0][0], points[0][1]], 0];
+    fitCurve: (points, offset, opts) => {
+        const slice = points.slice(offset);
+        if (slice.length < 2) return [[1, slice[0][0], slice[0][1]], points.length -1];
 
-        const start = points[0];
-        const end = points[points.length - 1];
-        
-        let maxError = 0;
-        let maxErrorIndex = 0;
-        for (let i = 1; i < points.length - 1; i++) {
-            const error = ImageTracer.perpendicularDistance(points[i], start, end);
-            if (error > maxError) {
-                maxError = error;
-                maxErrorIndex = i;
+        if (opts.allowQuadratic) {
+            for (let i = Math.min(slice.length - 1, 15); i >= 2; i--) {
+                const curveSlice = slice.slice(0, i);
+                const start = curveSlice[0];
+                const end = curveSlice[curveSlice.length - 1];
+                
+                let maxError = 0, maxErrorIndex = 0;
+                for (let j = 1; j < curveSlice.length - 1; j++) {
+                    const error = ImageTracer.perpendicularDistance(curveSlice[j], start, end);
+                    if (error > maxError) { maxError = error; maxErrorIndex = j; }
+                }
+
+                if (maxError < opts.qtres) {
+                    const t = ImageTracer.findTForPoint(curveSlice[maxErrorIndex], start, end);
+                    const control = ImageTracer.calculateControlPoint(t, curveSlice[maxErrorIndex], start, end);
+                    return [[2, control[0], control[1], end[0], end[1]], offset + i -1];
+                }
             }
         }
 
-        if (maxError <= tolerance || points.length <= 2) {
-             return [[1, end[0], end[1]], maxError];
-        }
-        
-        const p = points[maxErrorIndex];
-        const t = ImageTracer.findTForPoint(p, start, end);
-        const control = ImageTracer.calculateControlPoint(t, p, start, end);
-        
-        let curveFitError = 0;
-        for(const pt of points) {
-            const t_pt = ImageTracer.findTForPoint(pt, start, end);
-            const curvePt = ImageTracer.getQuadraticBezierXY(t_pt, start, control, end);
-            curveFitError += Math.pow(pt[0] - curvePt.x, 2) + Math.pow(pt[1] - curvePt.y, 2);
+        if (opts.allowLines) {
+            const end = slice[1];
+            return [[1, end[0], end[1]], offset + 1];
         }
 
-        return [[2, control[0], control[1], end[0], end[1]], Math.sqrt(curveFitError / points.length)];
+        return [[1, slice[1][0], slice[1][1]], offset + 1];
     },
 
     perpendicularDistance: (p, p1, p2) => {
