@@ -1,4 +1,4 @@
-обнови гитхаб- lightweight vector tracing engine implementation.
+// vtrace.js - lightweight vector tracing engine implementation.
 
 window.vtrace = {
     trace: function(source, options = {}) {
@@ -169,7 +169,7 @@ const ImageTracer = {
     getPalette:(n,d)=>{const p=[{r:0,g:0,b:0,a:0}];for(let i=0;i<n;i++){const g=Math.floor(255*(i/(n-1)));p.push({r:g,g:g,b:g,a:255});}return p;},
     colorquantization:(d,p)=>{const data=d.data,id=new Array(d.width*d.height);for(let j=0;j<data.length;j+=4){if(data[j+3]<128){id[j/4]=-1;continue;}let c=-1,m=1e12;for(let i=0;i<p.length;i++){const di=Math.pow(p[i].r-data[j],2)+Math.pow(p[i].g-data[j+1],2)+Math.pow(p[i].b-data[j+2],2);if(di<m){m=di;c=i;}}id[j/4]=c;}return {...d,data:id,palette:p};},
     layering:(d)=>{const l=Array.from({length:d.palette.length},()=>Array.from({length:d.height},()=>new Array(d.width).fill(0)));for(let y=0;y<d.height;y++)for(let x=0;x<d.width;x++){const c=d.data[y*d.width+x];if(c!==-1)l[c][y][x]=1;}return l;},
-    batchpathscan:(l,p)=>l.map((layer,i)=>Image.Tracer.pathscan(layer,p).map(path=>({...path,colorid:i}))),
+    batchpathscan: (layers, pathomit) => layers.map((layer, i) => ImageTracer.pathscan(layer, pathomit).map(path => ({ ...path, colorid: i }))),
     pathscan:(a,p)=>{const ps=[],w=a[0].length,h=a.length;for(let r=0;r<h;r++)for(let c=0;c<w;c++)if(a[r][c]===1){let path={points:[],bbox:[c,r,c,r]},px=c,py=r,d=1;while(true){path.points.push([d,px,py]);a[py][px]=2;let n=ImageTracer.next_pixel(a,px,py,d);if(n.isend)break;px=n.px;py=n.py;d=n.nd;}if(path.points.length>=p)ps.push(path);}return ps;},
     next_pixel:(a,px,py,d)=>{const ds=[[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];for(let i=0;i<8;i++){const cd=(d+i+7)%8,nx=px+ds[cd][0],ny=py+ds[cd][1];if(nx>=0&&nx<a[0].length&&ny>=0&&ny<a.length&&a[ny][nx]===1)return{px:nx,py:ny,nd:cd,isend:false};}return{isend:true};},
     batchinterpollation:(p,lt,qt)=>p.map(l=>l.map(path=>({...path,points:ImageTracer.fitseq(path.points,lt,qt)}))),
