@@ -1,0 +1,21 @@
+# Node and system
+*.log
+.DS_Store
+Thumbs.db
+
+# User settings
+.vscode/
+
+# Build outputs
+dist/
+build/
+
+# Mac
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+
+# extension packages
+*.crx

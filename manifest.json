@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Vector Tracer",
+  "version": "1.0",
+  "description": "A side panel extension to trace raster images into vector (SVG).",
+  "permissions": ["sidePanel", "contextMenus"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "action": {
+    "default_title": "Open Vector Tracer"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
