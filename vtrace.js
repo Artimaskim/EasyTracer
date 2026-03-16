@@ -265,14 +265,15 @@ const ImageTracer = {
             }
             id[j / 4] = c;
         }
-        return { ...d, data: id };
+        return { ...d, data: id, palette: p };
     },
 
     layering: (d) => {
+        if (!d.palette || !d.palette.length) return [];
         const l = Array.from({ length: d.palette.length }, () => Array.from({ length: d.height }, () => new Array(d.width).fill(0)));
         for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) {
             const c = d.data[y * d.width + x];
-            if (c !== -1) l[c][y][x] = 1;
+            if (c > -1 && c < l.length) l[c][y][x] = 1;
         }
         return l;
     },
