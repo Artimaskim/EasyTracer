@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Vector Tracer",
+  "name": "EasyTracer",
   "version": "1.0",
   "description": "A side panel extension to trace raster images into vector (SVG).",
   "permissions": ["sidePanel", "contextMenus"],
@@ -11,7 +11,7 @@
     "default_path": "panel.html"
   },
   "action": {
-    "default_title": "Open Vector Tracer"
+    "default_title": "Open EasyTracer"
   },
   "icons": {
     "16": "icons/icon16.png",
