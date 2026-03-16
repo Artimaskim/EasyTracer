@@ -271,7 +271,6 @@
             transform: translate(-50%, -50%) scale(1);
         }
         
-        /* NEW: Hide the SVG container on hold to show the original image underneath */
         #image-box:active #svg-container {
             opacity: 0;
         }
@@ -343,47 +342,39 @@
             <h3>Settings</h3>
             <div class="settings-grid">
                 <div class="setting">
-                    <label for="quality">Quality Preset <span class="value-indicator" data-target="quality">Balanced</span><span class="info-icon" data-tip="Скорость vs качество трассировки.">i</span></label>
-                    <select id="quality" name="quality" style="width:100%; padding: 6px; border-radius:4px; background:#1e222a; color:#fff; border:1px solid #3d424b;">
-                        <option value="fast">Fast</option>
-                        <option value="balanced" selected>Balanced</option>
-                        <option value="high">High Quality</option>
+                    <label for="line-fit-tolerance">Line Fit Tolerance <span class="value-indicator" data-target="line-fit-tolerance">Medium</span><span class="info-icon" data-tip="Controls how tightly the vector path follows the pixel edges.">i</span></label>
+                    <select id="line-fit-tolerance" name="lineFitTolerance" style="width:100%; padding: 6px; border-radius:4px; background:#1e222a; color:#fff; border:1px solid #3d424b;">
+                        <option value="coarse">Coarse</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="fine">Fine</option>
+                        <option value="super-fine">Super Fine</option>
                     </select>
                 </div>
                 <div class="setting">
-                    <label for="colors">Colors <span class="value-indicator" data-target="colors">16</span><span class="info-icon" data-tip="Количество цветов: меньше = упрощённее. Больше = точнее и тяжелее.">i</span></label>
+                    <label>Allowed Curve Types</label>
+                    <div class="checkbox-setting">
+                        <label for="allow-lines">Lines</label>
+                        <input type="checkbox" id="allow-lines" name="allowLines" checked disabled>
+                    </div>
+                    <div class="checkbox-setting">
+                        <label for="allow-quadratic">Quadratic Bezier</label>
+                        <input type="checkbox" id="allow-quadratic" name="allowQuadratic" checked disabled>
+                    </div>
+                </div>
+                <div class="setting">
+                    <label for="colors">Colors <span class="value-indicator" data-target="colors">16</span><span class="info-icon" data-tip="Number of colors to quantize the image to.">i</span></label>
                     <input type="range" id="colors" name="numberofcolors" min="2" max="64" value="16">
                 </div>
                 <div class="setting">
-                    <label for="blur">Blur <span class="value-indicator" data-target="blur">0</span><span class="info-icon" data-tip="Размытие: уменьшает мелкие шумы и сглаживает края перед трассировкой.">i</span></label>
+                    <label for="blur">Blur <span class="value-indicator" data-target="blur">0</span><span class="info-icon" data-tip="Pre-blur radius to apply to the image before tracing.">i</span></label>
                     <input type="range" id="blur" name="blurradius" min="0" max="10" value="0">
                 </div>
                 <div class="setting">
-                    <label for="noise">Noise Suppression <span class="value-indicator" data-target="noise">8</span><span class="info-icon" data-tip="Шумоподавление: игнорирует короткие/мелкие контуры в итоговом SVG.">i</span></label>
+                    <label for="noise">Noise Suppression <span class="value-indicator" data-target="noise">8</span><span class="info-icon" data-tip="Ignore paths shorter than this value.">i</span></label>
                     <input type="range" id="noise" name="pathomit" min="0" max="100" value="8">
                 </div>
-                <div class="setting">
-                    <label for="qtres">Curve Fidelity <span class="value-indicator" data-target="qtres">1</span><span class="info-icon" data-tip="Точность кривых: низкое значение сохраняет больше точных кривых.">i</span></label>
-                    <input type="range" id="qtres" name="qtres" min="0" max="10" value="1" step="0.1">
-                </div>
-                <div class="setting">
-                    <label for="ltres">Line Smoothing <span class="value-indicator" data-target="ltres">1</span><span class="info-icon" data-tip="Сглаживание: уменьшает ступенчатость линий при трассировке.">i</span></label>
-                    <input type="range" id="ltres" name="ltres" min="0" max="10" value="1" step="0.1">
-                </div>
-                <div class="setting">
-                    <label for="strokewidth">Stroke Width <span class="value-indicator" data-target="strokewidth">1</span><span class="info-icon" data-tip="Толщина контура для итогового SVG.">i</span></label>
-                    <input type="number" id="strokewidth" name="strokewidth" min="0" max="20" value="1" step="0.5">
-                </div>
                 <div class="setting checkbox-setting">
-                    <label for="linefilter">Line Filter <span class="info-icon" data-tip="Фильтр линий удаляет короткие артефакты.">i</span></label>
-                    <input type="checkbox" id="linefilter" name="linefilter">
-                </div>
-                <div class="setting checkbox-setting">
-                    <label for="rightangleenhance">Enhance Right Angles <span class="info-icon" data-tip="Усиление прямых углов выравнивает углы ближе к 90°.">i</span></label>
-                    <input type="checkbox" id="rightangleenhance" name="rightangleenhance" checked>
-                </div>
-                <div class="setting checkbox-setting">
-                    <label for="autoshapes">Auto circles/ovals <span class="info-icon" data-tip="Автоматически определяет простые круги/овалы и добавляет сглаживание в трассировку.">i</span></label>
+                    <label for="autoshapes">Auto circles/ovals <span class="info-icon" data-tip="Auto-detect simple ovals and circles.">i</span></label>
                     <input type="checkbox" id="autoshapes" name="autoshapes" checked>
                 </div>
             </div>
@@ -401,7 +392,6 @@
                 <div id="mode-label">Raster</div>
                 <div id="engine-label" style="position:absolute;top:8px;right:50px;background:rgba(0,0,0,0.6);color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;z-index:22;">Engine: vtrace</div>
                 <button id="close-view-btn">✕</button>
-                <!-- IMPORTANT: The children are now the image and the svg container -->
                 <img id="original-image" src="" alt="Original Image"/>
                 <div id="svg-container"></div>
             </div>

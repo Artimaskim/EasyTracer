@@ -18,19 +18,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeViewBtn = document.getElementById('close-view-btn');
     const tooltipPopup = document.getElementById('tooltip-popup');
 
-    const qualitySelect = document.getElementById('quality');
-    const settingsInputs = document.querySelectorAll('#settings-panel input');
+    const lineFitToleranceSelect = document.getElementById('line-fit-tolerance');
+    const settingsInputs = document.querySelectorAll('#settings-panel input, #settings-panel select');
 
-    const tooltipMap = {
-        numberofcolors: 'Количество цветов: меньше = упрощённее. Больше = точнее и тяжелее.',
-        blurradius: 'Размытие: уменьшает мелкие шумы, сглаживает края до трассировки.',
-        pathomit: 'Шумоподавление: игнорирует короткие/мелкие контуры в результирующем SVG.',
-        qtres: 'Точность кривых: низкое значение сохраняет больше точных кривых.',
-        ltres: 'Сглаживание линий: уменьшает ступенчатость линий при трассировке.',
-        strokewidth: 'Толщина контура в итоговом SVG (при выводе обводки).',
-        linefilter: 'Фильтр линий: удаляет короткие куски линий для чистоты.',
-        rightangleenhance: 'Усиление прямых углов: выравнивает углы ближе к 90°.',
-    };
+    function getToleranceSettings() {
+        const tolerance = lineFitToleranceSelect.value;
+        switch (tolerance) {
+            case 'coarse':
+                return { ltres: 5, qtres: 5 };
+            case 'fine':
+                return { ltres: 0.8, qtres: 0.8 };
+            case 'super-fine':
+                return { ltres: 0.5, qtres: 0.5 };
+            case 'medium':
+            default:
+                return { ltres: 1, qtres: 1 };
+        }
+    }
 
     function setSettingIndicators(){
         settingsInputs.forEach(input => {
@@ -48,63 +52,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 const label2 = document.querySelector(`label[for="${input.id}"]`);
                 const indicator2 = label2?.querySelector('.value-indicator');
                 if (indicator2) {
-                    indicator2.textContent = input.value;
+                     if(input.tagName === 'SELECT'){
+                        indicator2.textContent = input.options[input.selectedIndex].text;
+                     } else {
+                        indicator2.textContent = input.value;
+                     }
                 }
             });
-        });
-
-        if (qualitySelect) {
-            const qualityLabel = document.querySelector('label[for="quality"] .value-indicator');
-            if (qualityLabel) {
-                qualityLabel.textContent = qualitySelect.value === 'fast' ? 'Fast' : qualitySelect.value === 'high' ? 'High Quality' : 'Balanced';
-            }
-            qualitySelect.addEventListener('change', () => {
-                applyQualityPreset(qualitySelect.value);
-                if (qualityLabel) {
-                    qualityLabel.textContent = qualitySelect.value === 'fast' ? 'Fast' : qualitySelect.value === 'high' ? 'High Quality' : 'Balanced';
-                }
-            });
-        }
-    }
-
-    function applyQualityPreset(preset) {
-        if (!qualitySelect) return;
-        let config;
-        if (preset === 'fast') {
-            config = { numberofcolors: 6, blurradius: 0, pathomit: 20, qtres: 5, ltres: 5, strokewidth: 0.5, linefilter: true, rightangleenhance: false };
-        } else if (preset === 'high') {
-            config = { numberofcolors: 36, blurradius: 0, pathomit: 1, qtres: 0.8, ltres: 0.8, strokewidth: 1, linefilter: false, rightangleenhance: true };
-        } else {
-            config = { numberofcolors: 16, blurradius: 0, pathomit: 8, qtres: 1, ltres: 1, strokewidth: 1, linefilter: false, rightangleenhance: true };
-        }
-
-        const map = {
-            numberofcolors: 'colors',
-            blurradius: 'blur',
-            pathomit: 'noise',
-            qtres: 'qtres',
-            ltres: 'ltres',
-            strokewidth: 'strokewidth',
-            linefilter: 'linefilter',
-            rightangleenhance: 'rightangleenhance'
-        };
-
-        Object.keys(config).forEach(key => {
-            const inputName = map[key];
-            const input = document.querySelector(`[name="${key}"]`);
-            if (input) {
-                if (input.type === 'checkbox') {
-                    input.checked = config[key];
-                } else {
-                    input.value = config[key];
-                }
-            }
-        });
-        settingsInputs.forEach(input => {
-            const label = document.querySelector(`label[for="${input.id}"] .value-indicator`);
-            if (label) {
-                label.textContent = input.type === 'checkbox' ? (input.checked ? 'on' : 'off') : input.value;
-            }
         });
     }
 
@@ -114,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.info-icon').forEach(icon => {
             icon.addEventListener('mouseenter', (e) => {
                 tooltipTimer = setTimeout(() => {
-                    const message = icon.getAttribute('data-tip') || 'Информация по настройке.';
+                    const message = icon.getAttribute('data-tip') || 'Info not available.';
                     tooltipPopup.textContent = message;
                     const rect = icon.getBoundingClientRect();
                     const x = rect.left + rect.width / 2;
@@ -183,7 +137,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return false;
         }
 
-        // Set innerHTML safely from the parsed <svg>
         svgContainer.innerHTML = '';
         svgContainer.appendChild(svg);
         return true;
@@ -192,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function saveSVG(){
         const svg = svgContainer.querySelector('svg');
         if(!svg){
-            alert('Нет результирующей SVG. Выполните трассировку сначала.');
+            alert('No resulting SVG. Trace first.');
             return;
         }
         const svgText = svg.outerHTML;
@@ -202,16 +155,16 @@ document.addEventListener('DOMContentLoaded', () => {
     async function copyToClipboard(){
         const svg = svgContainer.querySelector('svg');
         if(!svg){
-            alert('Нет результирующей SVG. Выполните трассировку сначала.');
+            alert('No resulting SVG. Trace first.');
             return;
         }
         const svgText = svg.outerHTML;
         try {
             await navigator.clipboard.writeText(svgText);
-            alert('SVG скопирован в буфер обмена. Вставьте как текст или сохраните файл.');
+            alert('SVG copied to clipboard. Paste as text or save file.');
         } catch (err) {
             console.error('Clipboard write failed', err);
-            alert('Не удалось скопировать SVG. Попробуйте сохранить файл.');
+            alert('Failed to copy SVG. Try saving the file.');
         }
     }
 
@@ -280,16 +233,14 @@ document.addEventListener('DOMContentLoaded', () => {
         originalImage.onload = () => {
             updateTransform();
         };
-        svgContainer.innerHTML = ''; // Clear previous SVG
+        svgContainer.innerHTML = '';
         uploadBox.style.display = 'none';
         imageBox.style.display = 'flex';
         traceBtn.disabled = false;
         clearBtn.disabled = false;
         clearAllBtn.disabled = false;
-        // Disable save buttons until a new trace is made
         saveSvgBtn.disabled = true;
         if (copyClipboardBtn) copyClipboardBtn.disabled = true;
-        // Keep current scale if already set
         updateTransform();
         isShowingVector = false;
         hasTraced = false;
@@ -330,7 +281,6 @@ document.addEventListener('DOMContentLoaded', () => {
         saveSvgBtn.disabled = true;
         if (copyClipboardBtn) copyClipboardBtn.disabled = true;
         clearAllBtn.disabled = true;
-        // Reset transform
         scale = 1;
         panX = 0;
         panY = 0;
@@ -340,7 +290,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- EVENT LISTENERS ---
 
-    // Image Loading
     urlInput.addEventListener('change', async (e) => {
         const url = e.target.value.trim();
         if (url) {
@@ -455,18 +404,20 @@ document.addEventListener('DOMContentLoaded', () => {
         svgContainer.innerHTML = '';
 
         setTimeout(() => {
-            const options = { layering: 0 };
+            const toleranceSettings = getToleranceSettings();
+            const options = { 
+                ...toleranceSettings 
+            };
+            
             settingsInputs.forEach(input => {
+                if(input.id === 'line-fit-tolerance') return;
+
                 if (input.type === 'checkbox') {
                     options[input.name] = input.checked;
                 } else if (input.type === 'range' || input.type === 'number') {
                     options[input.name] = parseFloat(input.value);
                 }
             });
-            const autoShapesCheckbox = document.getElementById('autoshapes');
-            if (autoShapesCheckbox) {
-                options.autoShapes = autoShapesCheckbox.checked;
-            }
 
             try {
                 Tracer.traceRasterToSVG(
@@ -474,33 +425,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     (svgString) => {
                         console.log('TRACE CALLBACK: svgString length=', svgString ? svgString.length : 0);
                         if (!svgString || typeof svgString !== 'string' || svgString.trim().length === 0) {
-                            console.warn('Empty SVG output from tracer.');
-                            svgContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120"><rect width="300" height="120" fill="#111"/><text x="14" y="45" fill="#fff" font-size="14">Пустой SVG. Проверьте параметры.</text></svg>';
+                            svgContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120"><rect width="300" height="120" fill="#111"/><text x="14" y="45" fill="#fff" font-size="14">Empty SVG. Check parameters.</text></svg>';
                         } else {
                             const ok = renderSVGString(svgString);
                             if (!ok) {
-                                console.warn('renderSVGString failed, using plain innerHTML fallback.');
                                 svgContainer.innerHTML = svgString.replace(/^\s*<\?xml[^>]*>\s*/i, '').trim();
                             }
                         }
                         const svg = svgContainer.querySelector('svg');
                         const hasValidSvg = !!svg && svg.children.length > 0;
-                        console.log('TRACE CALLBACK: svg element exists=', !!svg, 'children=', svg ? svg.children.length : 0);
-                        if (!hasValidSvg) {
-                            console.warn('TRACE CALLBACK: no valid vector elements from SVG. Changing to fallback.');
-                            isShowingVector = false;
-                            if (engineLabel) engineLabel.textContent = 'Engine: fallback';
-                            svgContainer.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120"><rect width="300" height="120" fill="#111"/><text x="14" y="45" fill="#fff" font-size="14">Vector data not found</text></svg>';
-                        } else {
-                            isShowingVector = true;
-                            if (engineLabel) engineLabel.textContent = 'Engine: vtrace';
-                        }
-
-                        try {
-                            updateTransform();
-                        } catch (err) {
-                            console.error('updateTransform error:', err);
-                        }
+                        isShowingVector = hasValidSvg;
+                        
+                        updateTransform();
                         updateViewMode();
                         hasTraced = true;
 
@@ -514,8 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
             } catch (err) {
                 console.error('Tracing error:', err);
-                if (engineLabel) engineLabel.textContent = 'Engine: fallback';
-                alert('Ошибка трассировки изображения. Попробуйте уменьшить количество цветов или отключить правые углы.');
+                alert('Error during tracing. Try adjusting settings.');
                 traceBtn.disabled = false;
                 traceBtn.textContent = hasTraced ? 'Retrace' : 'Trace';
             }
@@ -524,11 +459,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Zoom Logic
     previewPanel.addEventListener('wheel', (e) => {
-        if (!originalImage.src) return; // Don't zoom if no image
+        if (!originalImage.src) return;
         e.preventDefault();
         
         const zoomSpeed = 1.1;
-        const delta = e.deltaY > 0 ? -1 : 1; // -1 for zooming out, 1 for zooming in
+        const delta = e.deltaY > 0 ? -1 : 1;
         
         if (delta > 0) {
             scale = Math.min(maxScale, scale * zoomSpeed);
@@ -541,9 +476,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- INITIAL STATE ---
     setSettingIndicators();
-    if (qualitySelect) {
-        applyQualityPreset(qualitySelect.value);
-    }
     attachInfoIconTooltips();
     clearImage();
 });
