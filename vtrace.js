@@ -49,7 +49,10 @@ function rasterToVectorSVG(image, options) {
     if (shapeSensitivity > 0) {
         const detectedShapes = detectSimpleOvals(imageData, width, height, options);
         if (detectedShapes && detectedShapes.length > 0) {
-            detectedShapePieces = detectedShapes.map(s => ` <ellipse cx="${s.cx.toFixed(2)}" cy="${s.cy.toFixed(2)}" rx="${s.rx.toFixed(2)}" ry="${s.ry.toFixed(2)}" fill="${s.fill}"/>`);
+            detectedShapePieces = detectedShapes.map(s => ({ 
+                svg: ` <ellipse cx="${s.cx.toFixed(2)}" cy="${s.cy.toFixed(2)}" rx="${s.rx.toFixed(2)}" ry="${s.ry.toFixed(2)}" fill="${s.fill}"/>`, 
+                area: s.rx * s.ry * Math.PI 
+            }));
             const data = imageData.data;
             detectedShapes.forEach(shape => {
                 const { cx, cy, rx, ry } = shape;
@@ -67,61 +70,67 @@ function rasterToVectorSVG(image, options) {
     const pathPieces = tracePaths(imageData, width, height, options);
     const allPieces = [...detectedShapePieces, ...pathPieces];
 
-    if (allPieces.length === 0) {
-        allPieces.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`);
+    // Sort all pieces by area, descending. Largest first.
+    allPieces.sort((a, b) => b.area - a.area);
+
+    const svgElements = allPieces.map(p => p.svg);
+
+    if (svgElements.length === 0) {
+        svgElements.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`);
     }
 
     return `<?xml version="1.0" encoding="UTF-8"?>\n`+
         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">\n`+
         `  <rect width="100%" height="100%" fill="transparent"/>\n`+
-        `  ${allPieces.join('\n')}\n</svg>`;
+        `  ${svgElements.join('\n')}\n</svg>`;
 }
 
 function tracePaths(imageData, width, height, options) {
     const ltres = Number(options.ltres) || 1;
     const qtres = Number(options.qtres) || 1;
     const pathOmit = Math.max(1, Number(options.pathomit) || 3);
-    const linefilter = Boolean(options.linefilter);
     const allowLines = options.hasOwnProperty('allowLines') ? options.allowLines : true;
     const allowQuadratic = options.hasOwnProperty('allowQuadratic') ? options.allowQuadratic : true;
     const smoothamount = Number(options.smoothamount) || 0;
 
     const indexedData = ImageTracer.getImgdata(width, height, imageData.data);
     const pal = ImageTracer.getPalette(options.numberofcolors || 16, indexedData);
-    const colorQuantizedData = ImageTracer.colorquantization(indexedData, pal, options);
+    const colorQuantizedData = ImageTracer.colorquantization(indexedData, pal);
     const layerData = ImageTracer.layering(colorQuantizedData);
     
-    let pathData = ImageTracer.batchpathscan(layerData, pathOmit);
+    let allPaths = ImageTracer.batchpathscan(layerData, pathOmit);
+
     if (smoothamount > 0) {
-        pathData = ImageTracer.batchsurfacesmoothing(pathData, { smoothamount });
+        allPaths = ImageTracer.batchsurfacesmoothing(allPaths, { smoothamount });
     }
 
-    const interpPathData = ImageTracer.batchinterpollation(pathData, { ltres, qtres, allowLines, allowQuadratic });
+    const interpPathData = ImageTracer.batchinterpollation(allPaths, { ltres, qtres, allowLines, allowQuadratic });
 
-    let svgPathStrs = [];
-    interpPathData.forEach((layer) => {
-        layer.forEach((path) => {
-            if (linefilter && path.points.length < 4) return;
-            const color = pal[path.colorid];
-            if (!color || color.a < 32) return;
-            const fill = `rgb(${color.r},${color.g},${color.b})`;
-            if (path.points.length < 2) return;
+    return interpPathData.map(path => {
+        const color = pal[path.colorid];
+        if (!color || color.a < 32 || path.points.length < 2) return null;
 
-            let pathStr = `M ${path.points[0][1].toFixed(3)} ${path.points[0][2].toFixed(3)} `;
-            path.points.slice(1).forEach(p => {
-                const command = ImageTracer.pathnode_to_svg[p[0]];
-                if (command) {
-                    pathStr += `${command} `;
-                    p.slice(1).forEach(val => {
-                        pathStr += (typeof val === 'number') ? `${val.toFixed(3)} ` : '0 ';
-                    });
-                }
-            });
-            pathStr += "Z";
-            svgPathStrs.push(`<path d="${pathStr}" fill="${fill}" stroke="none"/>`);
+        const fill = `rgb(${color.r},${color.g},${color.b})`;
+        let pathStr = `M ${path.points[0][1].toFixed(3)} ${path.points[0][2].toFixed(3)} `;
+        path.points.slice(1).forEach(p => {
+            const command = ImageTracer.pathnode_to_svg[p[0]];
+            if (command) {
+                pathStr += `${command} `;
+                p.slice(1).forEach(val => {
+                    pathStr += (typeof val === 'number') ? `${val.toFixed(3)} ` : '0 ';
+                });
+            }
         });
-    });
-    return svgPathStrs;
+        pathStr += "Z";
+        
+        const bbox = path.bbox;
+        const area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
+
+        return { 
+            svg: `<path d="${pathStr}" fill="${fill}" stroke="none"/>`, 
+            area: area
+        };
+    }).filter(p => p !== null);
 }
 
 function detectSimpleOvals(imageData, width, height, options) {
@@ -151,7 +160,8 @@ function detectSimpleOvals(imageData, width, height, options) {
             const ellipticalFillRatio = blob.points.length / (Math.PI * (w/2) * (h/2));
             if(ellipticalFillRatio < requiredFillRatio) continue;
 
-            blobs.push({ cx:minX+w/2, cy:minY+h/2, rx:w/2, ry:h/2, fill:`rgb(${blob.avgColor.r},${blob.avgColor.g},${blob.avgColor.b})` });
+            const shape = { cx:minX+w/2, cy:minY+h/2, rx:w/2, ry:h/2, fill:`rgb(${blob.avgColor.r},${blob.avgColor.g},${blob.avgColor.b})` };
+            blobs.push(shape);
             if (blobs.length >= 20) break;
         }
         if (blobs.length >= 20) break;
@@ -196,53 +206,46 @@ const ImageTracer = {
     getImgdata: (w, h, d) => ({ width: w, height: h, data: d }),
 
     getPalette: (numberOfColors, imgData) => {
+        const { data, width, height } = imgData;
         const pixelArray = [];
-        for (let i = 0; i < imgData.data.length; i += 4) {
-            if (imgData.data[i + 3] > 127) {
-                pixelArray.push([imgData.data[i], imgData.data[i + 1], imgData.data[i + 2]]);
+        const step = Math.max(1, Math.floor(Math.sqrt(width * height / (numberOfColors * 4))));
+        
+        for (let y = 0; y < height; y += step) {
+            for (let x = 0; x < width; x += step) {
+                const i = (y * width + x) * 4;
+                if (data[i + 3] > 127) {
+                    pixelArray.push([data[i], data[i+1], data[i+2]]);
+                }
             }
         }
 
-        const sampleSize = Math.min(1000, pixelArray.length);
-        const sample = pixelArray.length > sampleSize ? 
-            [...Array(sampleSize)].map(() => pixelArray[Math.floor(Math.random() * pixelArray.length)]) : 
-            pixelArray;
+        if (pixelArray.length === 0) return [{r:0,g:0,b:0,a:0}];
 
-        if (sample.length < numberOfColors) {
-            return [{r:0,g:0,b:0,a:0}, ...sample.map(p=>({r:p[0], g:p[1], b:p[2], a:255}))];
+        if (pixelArray.length < numberOfColors) {
+            return [{r:0,g:0,b:0,a:0}, ...pixelArray.map(p=>({r:p[0], g:p[1], b:p[2], a:255}))];
         }
 
-        let centroids = sample.slice(0, numberOfColors).map(p=>[...p]);
-        let oldCentroids;
-        let iterations = 0;
-
-        do {
-            oldCentroids = centroids.map(c => [...c]);
+        let centroids = pixelArray.slice(0, numberOfColors).map(p=>[...p]);
+        for (let iter=0; iter<20; iter++) {
             const clusters = Array.from({ length: numberOfColors }, () => []);
-
-            for (const p of sample) {
-                let minDist = Infinity;
-                let clusterIndex = 0;
+            for (const p of pixelArray) {
+                let minDist = Infinity, clusterIndex = 0;
                 for (let i = 0; i < numberOfColors; i++) {
-                    const dist = Math.pow(p[0] - centroids[i][0], 2) + Math.pow(p[1] - centroids[i][1], 2) + Math.pow(p[2] - centroids[i][2], 2);
-                    if (dist < minDist) {
-                        minDist = dist;
-                        clusterIndex = i;
-                    }
+                    const dist = (p[0] - centroids[i][0])**2 + (p[1] - centroids[i][1])**2 + (p[2] - centroids[i][2])**2;
+                    if (dist < minDist) { minDist = dist; clusterIndex = i; }
                 }
                 clusters[clusterIndex].push(p);
             }
 
-            for (let i = 0; i < numberOfColors; i++) {
-                if (clusters[i].length > 0) {
-                    const avg = clusters[i].reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]], [0, 0, 0]);
-                    centroids[i] = [avg[0] / clusters[i].length, avg[1] / clusters[i].length, avg[2] / clusters[i].length];
-                } else {
-                    centroids[i] = sample[Math.floor(Math.random()*sample.length)];
-                }
-            }
-            iterations++;
-        } while (JSON.stringify(oldCentroids) !== JSON.stringify(centroids) && iterations < 20);
+            const newCentroids = centroids.map((_, i) => {
+                if (clusters[i].length === 0) return pixelArray[Math.floor(Math.random()*pixelArray.length)];
+                const avg = clusters[i].reduce((acc, p) => [acc[0]+p[0], acc[1]+p[1], acc[2]+p[2]], [0,0,0]);
+                return [avg[0]/clusters[i].length, avg[1]/clusters[i].length, avg[2]/clusters[i].length];
+            });
+            
+            if (JSON.stringify(newCentroids) === JSON.stringify(centroids)) break;
+            centroids = newCentroids;
+        }
 
         return [{r:0,g:0,b:0,a:0}, ...centroids.map(c => ({r: Math.round(c[0]), g: Math.round(c[1]), b: Math.round(c[2]), a: 255}))];
     },
@@ -256,16 +259,13 @@ const ImageTracer = {
                 continue;
             }
             let c = 0, m = Infinity;
-            for (let i = 1; i < p.length; i++) { // Start from 1 to ignore transparent
-                const di = Math.pow(p[i].r - data[j], 2) + Math.pow(p[i].g - data[j + 1], 2) + Math.pow(p[i].b - data[j + 2], 2);
-                if (di < m) {
-                    m = di;
-                    c = i;
-                }
+            for (let i = 1; i < p.length; i++) {
+                const di = (p[i].r - data[j])**2 + (p[i].g - data[j + 1])**2 + (p[i].b - data[j + 2])**2;
+                if (di < m) { m = di; c = i; }
             }
             id[j / 4] = c;
         }
-        return { ...d, data: id, palette: p };
+        return { ...d, data: id };
     },
 
     layering: (d) => {
@@ -277,15 +277,26 @@ const ImageTracer = {
         return l;
     },
 
-    batchpathscan: (layers, pathomit) => layers.map((layer, i) => ImageTracer.pathscan(layer, pathomit).map(path => ({ ...path, colorid: i }))),
+    batchpathscan: (layers, pathomit) => {
+        let allPaths = [];
+        layers.forEach((layer, i) => {
+            const paths = ImageTracer.pathscan(layer, pathomit);
+            paths.forEach(path => allPaths.push({ ...path, colorid: i }));
+        });
+        return allPaths;
+    },
 
     pathscan: (a, p) => {
         const ps = [], w = a[0].length, h = a.length;
         for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) if (a[r][c] === 1) {
-            let path = { points: [], bbox: [c, r, c, r] }, px = c, py = r, d = 1;
+            let px = c, py = r, d = 1;
+            const path = { points: [], bbox: [c, r, c, r] };
             while (true) {
                 path.points.push([px, py]);
                 a[py][px] = 2;
+                if (px < path.bbox[0]) path.bbox[0] = px; if (px > path.bbox[2]) path.bbox[2] = px;
+                if (py < path.bbox[1]) path.bbox[1] = py; if (py > path.bbox[3]) path.bbox[3] = py;
+
                 let n = ImageTracer.next_pixel(a, px, py, d);
                 if (n.isend) break;
                 px = n.px; py = n.py; d = n.nd;
@@ -308,38 +319,32 @@ const ImageTracer = {
         const smoothing = (opts && !isNaN(opts.smoothamount)) ? opts.smoothamount : 0;
         if (smoothing <= 0) return paths;
 
-        return paths.map(layer => 
-            layer.map(path => {
-                const { points } = path;
-                if (points.length < 3) return path;
-
-                const smoothedPoints = [];
-                smoothedPoints.push(points[0]); // Keep first point
-                
-                for (let i = 1; i < points.length - 1; i++) {
-                    const prev = smoothedPoints[i-1];
-                    const current = points[i];
-                    const next = points[i+1];
-                    const newX = current[0] * (1-smoothing) + (prev[0] + next[0]) * (smoothing / 2);
-                    const newY = current[1] * (1-smoothing) + (prev[1] + next[1]) * (smoothing / 2);
-                    smoothedPoints.push([newX, newY]);
-                }
-                
-                smoothedPoints.push(points[points.length-1]); // Keep last point
-                path.points = smoothedPoints;
-                return path;
-            })
-        );
+        return paths.map(path => {
+            const { points } = path;
+            if (points.length < 3) return path;
+            const smoothedPoints = [];
+            smoothedPoints.push(points[0]);
+            for (let i = 1; i < points.length - 1; i++) {
+                const prev = smoothedPoints[i-1];
+                const current = points[i];
+                const next = points[i+1];
+                const newX = current[0] * (1-smoothing) + (prev[0] + next[0]) * (smoothing / 2);
+                const newY = current[1] * (1-smoothing) + (prev[1] + next[1]) * (smoothing / 2);
+                smoothedPoints.push([newX, newY]);
+            }
+            smoothedPoints.push(points[points.length-1]);
+            path.points = smoothedPoints;
+            return path;
+        });
     },
     
-    batchinterpollation: (p, opts) => p.map(l => l.map(path => ({ ...path, points: ImageTracer.fitseq(path.points, opts) }))),
+    batchinterpollation: (p, opts) => p.map(path => ({ ...path, points: ImageTracer.fitseq(path.points, opts) })),
 
     fitseq: (points, opts) => {
         if (points.length < 2) return [];
         if (points.length === 2) {
             return [[1, points[0][0], points[0][1]], [1, points[1][0], points[1][1]]];
         }
-
         const segments = [];
         let i = 0;
         while (i < points.length - 1) {
@@ -360,13 +365,11 @@ const ImageTracer = {
                 const curveSlice = slice.slice(0, i);
                 const start = curveSlice[0];
                 const end = curveSlice[curveSlice.length - 1];
-                
                 let maxError = 0, maxErrorIndex = 0;
                 for (let j = 1; j < curveSlice.length - 1; j++) {
                     const error = ImageTracer.perpendicularDistance(curveSlice[j], start, end);
                     if (error > maxError) { maxError = error; maxErrorIndex = j; }
                 }
-
                 if (maxError < opts.qtres) {
                     const t = ImageTracer.findTForPoint(curveSlice[maxErrorIndex], start, end);
                     const control = ImageTracer.calculateControlPoint(t, curveSlice[maxErrorIndex], start, end);
@@ -374,25 +377,20 @@ const ImageTracer = {
                 }
             }
         }
-
-        if (opts.allowLines) {
-            const end = slice[1];
-            return [[1, end[0], end[1]], offset + 1];
-        }
-
-        return [[1, slice[1][0], slice[1][1]], offset + 1];
+        const end = slice[1];
+        return [[1, end[0], end[1]], offset + 1];
     },
 
     perpendicularDistance: (p, p1, p2) => {
         const dx = p2[0] - p1[0];
         const dy = p2[1] - p1[1];
-        if (dx === 0 && dy === 0) return Math.sqrt(Math.pow(p[0] - p1[0], 2) + Math.pow(p[1] - p1[1], 2));
+        if (dx === 0 && dy === 0) return Math.sqrt((p[0] - p1[0])**2 + (p[1] - p1[1])**2);
         return Math.abs(dy * p[0] - dx * p[1] + p2[0] * p1[1] - p2[1] * p1[0]) / Math.sqrt(dx * dx + dy * dy);
     },
 
     findTForPoint: (p, start, end) => {
-        const d_sp = Math.sqrt(Math.pow(p[0]-start[0],2) + Math.pow(p[1]-start[1],2));
-        const d_se = Math.sqrt(Math.pow(end[0]-start[0],2) + Math.pow(end[1]-start[1],2));
+        const d_sp = Math.sqrt((p[0]-start[0])**2 + (p[1]-start[1])**2);
+        const d_se = Math.sqrt((end[0]-start[0])**2 + (end[1]-start[1])**2);
         return (d_se === 0) ? 0 : d_sp / d_se;
     },
 
