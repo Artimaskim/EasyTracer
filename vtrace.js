@@ -136,7 +136,7 @@ function quantizeColors(imageData, options) {
 }
 
 function traceAllPaths(quantizedData, palette, width, height, options) {
-    const pathomit = Math.max(1, Number(options.pathomit) || 8);
+    const pathomit = Math.max(1, Number(options.pathomit) || 2);
     const allPaths = [];
     const memo = {}; // Memoization for contours
 
@@ -223,7 +223,7 @@ function findContours(data, width, height, colorIndex, memo) {
 }
 
 function processAndBuildPaths(paths, options) {
-    const { ltres = 1, qtres = 1, smoothamount = 0.5 } = options;
+    const { ltres = 0.5, qtres = 1, smoothamount = 0.5 } = options;
 
     // First pass: Simplify and smooth all paths
     const processedPaths = paths.map(p => {
