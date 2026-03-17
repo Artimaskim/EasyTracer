@@ -35,12 +35,23 @@ function rasterToVectorSVG(image, options) {
     
     let allPaths = traceAllPaths(quantizedData, palette, width, height, options);
     
-    allPaths.forEach(p => p.area = (p.bbox[2] - p.bbox[0]) * (p.bbox[3] - p.bbox[1]));
+    allPaths.forEach(p => p.area = calculatePolygonArea(p.points));
     allPaths.sort((a, b) => b.area - a.area);
     
     const svgPaths = processAndBuildPaths(allPaths, options);
     
     return assembleSVG(svgPaths, width, height);
+}
+
+function calculatePolygonArea(points) {
+    let area = 0;
+    const n = points.length;
+    for (let i = 0; i < n; i++) {
+        const p1 = points[i];
+        const p2 = points[(i + 1) % n];
+        area += (p1[0] * p2[1] - p2[0] * p1[1]);
+    }
+    return Math.abs(area / 2.0);
 }
 
 function prepareCanvas(image, options) {
