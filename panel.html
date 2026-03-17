@@ -122,19 +122,6 @@
             pointer-events: none;
         }
 
-        .checkbox-setting {
-            display: flex;
-            flex-direction: row-reverse;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 10px;
-        }
-        
-        .checkbox-setting label {
-             margin-bottom: 0;
-        }
-
-
         #preview-panel {
             flex-grow: 1;
             position: relative;
@@ -275,28 +262,6 @@
             opacity: 0;
         }
 
-        .button-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-        .wide-action {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 12px;
-        }
-        .wide-action > .left-stack {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            width: fit-content;
-        }
-        .wide-action > .right-stack {
-            display: flex;
-            gap: 10px;
-            align-items: flex-start;
-        }
         button {
             padding: 10px 15px;
             border: none;
@@ -328,10 +293,6 @@
             color: var(--bg-color);
         }
 
-        #save-panel .button-group {
-             grid-template-columns: repeat(3, 1fr);
-        }
-
     </style>
 </head>
 <body>
@@ -341,41 +302,21 @@
         <div id="settings-panel" class="panel">
             <h3>Settings</h3>
             <div class="settings-grid">
-                <div class="setting">
-                    <label for="line-fit-tolerance">Line Fit Tolerance <span class="value-indicator" data-target="line-fit-tolerance">Medium</span><span class="info-icon" data-tip="Controls how tightly the vector path follows the pixel edges.">i</span></label>
-                    <select id="line-fit-tolerance" name="lineFitTolerance" style="width:100%; padding: 6px; border-radius:4px; background:#1e222a; color:#fff; border:1px solid #3d424b;">
-                        <option value="coarse">Coarse</option>
-                        <option value="medium" selected>Medium</option>
-                        <option value="fine">Fine</option>
-                        <option value="super-fine">Super Fine</option>
-                    </select>
-                </div>
-                <div class="setting">
-                    <label>Allowed Curve Types</label>
-                    <div class="checkbox-setting">
-                        <label for="allow-lines">Lines</label>
-                        <input type="checkbox" id="allow-lines" name="allowLines" checked>
-                    </div>
-                    <div class="checkbox-setting">
-                        <label for="allow-quadratic">Quadratic Bezier</label>
-                        <input type="checkbox" id="allow-quadratic" name="allowQuadratic" checked>
-                    </div>
-                </div>
-                <div class="setting">
+                 <div class="setting">
                     <label for="colors">Colors <span class="value-indicator" data-target="colors">16</span><span class="info-icon" data-tip="Number of colors to quantize the image to.">i</span></label>
                     <input type="range" id="colors" name="numberofcolors" min="2" max="64" value="16">
                 </div>
                 <div class="setting">
                     <label for="blur">Blur <span class="value-indicator" data-target="blur">0</span><span class="info-icon" data-tip="Pre-blur radius to apply to the image before tracing.">i</span></label>
-                    <input type="range" id="blur" name="blurradius" min="0" max="10" value="0">
+                    <input type="range" id="blur" name="blurradius" min="0" max="10" step="0.5" value="0">
                 </div>
                 <div class="setting">
                     <label for="noise">Noise Suppression <span class="value-indicator" data-target="noise">8</span><span class="info-icon" data-tip="Ignore paths shorter than this value.">i</span></label>
                     <input type="range" id="noise" name="pathomit" min="0" max="100" value="8">
                 </div>
-                 <div class="setting">
-                    <label for="shape-sensitivity">Shape Detection <span class="value-indicator" data-target="shape-sensitivity">0.7</span><span class="info-icon" data-tip="Controls how aggressively the tracer looks for ovals. 0=off, 1=very aggressive.">i</span></label>
-                    <input type="range" id="shape-sensitivity" name="autoshapes" min="0" max="1" step="0.1" value="0.7">
+                <div class="setting">
+                    <label for="path-simplification">Path Simplification <span class="value-indicator" data-target="path-simplification">1</span><span class="info-icon" data-tip="Controls how tightly the vector path follows the pixel edges. Higher values mean smoother, less detailed paths.">i</span></label>
+                    <input type="range" id="path-simplification" name="ltres" min="0.1" max="5" step="0.1" value="1">
                 </div>
                 <div class="setting">
                     <label for="path-smoothing">Path Smoothing <span class="value-indicator" data-target="path-smoothing">0.5</span><span class="info-icon" data-tip="Smooths out jittery paths. 0=off, 1=max smoothing.">i</span></label>
