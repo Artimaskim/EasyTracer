@@ -167,6 +167,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fileInput.files[0]) showImage(URL.createObjectURL(fileInput.files[0]));
     });
     
+    uploadBox.addEventListener('click', (e) => {
+        if (e.target !== urlInput) {
+            fileInput.click();
+        }
+    });
+
     const setupDragAndDrop = (el, handler) => {
         el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('dragover'); });
         el.addEventListener('dragleave', () => el.classList.remove('dragover'));
